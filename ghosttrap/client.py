@@ -9,12 +9,14 @@ Usage:
     # or with a full URL:
     ghosttrap.init("https://ghosttrap.io/trap/owner/repo/")
 
-Unhandled exceptions are posted automatically via sys.excepthook. For
-caught exceptions inside web frameworks, call ghosttrap.report(exc)
-explicitly inside the except block.
+Hooks into sys.excepthook (unhandled exceptions), Python logging
+(logger.exception / logger.error with exc_info), and Celery task
+failures (if Celery is installed). For additional coverage, use the
+Django middleware: ghosttrap.middleware.GhostTrapMiddleware.
 """
 
 import json
+import logging
 import sys
 import traceback
 import urllib.request
@@ -42,6 +44,8 @@ def init(dsn, server=None):
         _endpoint = f"{base}/trap/{dsn}/"
     _original_excepthook = sys.excepthook
     sys.excepthook = _error_hook
+    _install_logging_handler()
+    _install_celery_hook()
 
 
 def report(exc):
@@ -60,12 +64,36 @@ def _error_hook(exc_type, exc_value, exc_tb):
     _original_excepthook(exc_type, exc_value, exc_tb)
 
 
+def _install_logging_handler():
+    handler = _GhostTrapLogHandler()
+    handler.setLevel(logging.ERROR)
+    logging.getLogger().addHandler(handler)
+
+
+def _install_celery_hook():
+    try:
+        from celery.signals import task_failure
+        task_failure.connect(_on_task_failure)
+    except ImportError:
+        pass
+
+
+def _on_task_failure(sender, exception, traceback, **kwargs):
+    report(exception)
+
+
+class _GhostTrapLogHandler(logging.Handler):
+    def emit(self, record):
+        if record.exc_info and record.exc_info[1]:
+            report(record.exc_info[1])
+
+
 def _build_payload(exc_type, exc_value, exc_tb):
-    frames = traceback.extract_tb(exc_tb)
+    frames = traceback.extract_tb(exc_tb) if exc_tb else []
     return {
         "type": exc_type.__name__,
         "message": str(exc_value),
-        "traceback": traceback.format_exception(exc_type, exc_value, exc_tb),
+        "traceback": traceback.format_exception(exc_type, exc_value, exc_tb) if exc_tb else [],
         "frames": [
             {
                 "file": f.filename,
