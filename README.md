@@ -1,35 +1,53 @@
 # ghosttrap-sdk
 
-Drop-in error reporter for Python apps.
+Error reporting for Python apps, built for AI agents.
 
-## Install
+When your app breaks in production, ghosttrap captures the exception and streams it to Claude Code in real time. Claude reads the traceback, opens the file, and fixes the bug — no human reads the error.
+
+## Quick start
 
 ```
 pip install ghosttrap-sdk
 ```
 
-## Use
-
 ```python
 import ghosttrap
-
-# with a token (get one from `ghosttrap watch`):
-ghosttrap.init("t_abc123def456")
-
-# or with a full URL:
-ghosttrap.init("https://ghosttrap.io/trap/owner/repo/")
+ghosttrap.init("t_your_token_here")
 ```
 
-Unhandled exceptions are POSTed to ghosttrap.io with full tracebacks.
-The original `sys.excepthook` is preserved so errors still print to
-stderr as normal.
+That's it. Unhandled exceptions, logged errors, and Celery task failures are all reported automatically.
 
-For caught exceptions inside web frameworks:
+Get your token by running [`ghosttrap setup`](https://github.com/arowley-predictive-power/ghosttrap-cli) in your project directory.
+
+## What it hooks into
+
+- **`sys.excepthook`** — unhandled exceptions that crash the process
+- **Python logging** — any `logger.exception()` or `logger.error(..., exc_info=True)` call
+- **Celery** — task failures via `celery.signals.task_failure` (auto-detected, no config needed)
+
+## Django integration
+
+Add to your settings:
 
 ```python
-try:
-    do_something()
-except Exception as exc:
-    ghosttrap.report(exc)
-    raise
+INSTALLED_APPS = [
+    ...
+    "ghosttrap.django.GhostTrapApp",
+]
+
+MIDDLEWARE = [
+    "ghosttrap.django.GhostTrapMiddleware",
+    ...
+]
 ```
+
+`GhostTrapApp` re-attaches the logging handler after Django's logging setup. `GhostTrapMiddleware` catches unhandled view exceptions.
+
+## Zero dependencies
+
+The SDK is pure Python stdlib. No transitive dependencies, no version conflicts, no bloat in your production image.
+
+## Links
+
+- [ghosttrap-cli](https://github.com/arowley-predictive-power/ghosttrap-cli) — the developer-side listener that connects errors to Claude Code
+- [ghosttrap.io](https://ghosttrap.io) — the server that routes errors from your app to your agent
