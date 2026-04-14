@@ -1,6 +1,6 @@
 # ghosttrap-sdk
 
-Error reporting for Python apps, built for AI agents. Part of [ghosttrap](https://github.com/arowley-predictive-power/ghosttrap-cli).
+Error reporting for Python apps, built for AI agents. Part of [ghosttrap](https://github.com/alex-rowley/ghosttrap-cli).
 
 ## Install
 
@@ -15,7 +15,7 @@ import ghosttrap
 ghosttrap.init("t_your_token_here")
 ```
 
-Get your token by running `ghosttrap setup` from [ghosttrap-cli](https://github.com/arowley-predictive-power/ghosttrap-cli).
+Get your token by running `ghosttrap setup` from [ghosttrap-cli](https://github.com/alex-rowley/ghosttrap-cli).
 
 ## What it hooks into
 
