@@ -39,5 +39,15 @@ class GhostTrapMiddleware:
 
     def process_exception(self, request, exception):
         from ghosttrap.client import report
-        report(exception)
+        report(exception, user=_user_context(request))
         return None
+
+
+def _user_context(request):
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return None
+    return {
+        "id": getattr(user, "pk", None),
+        "username": getattr(user, "get_username", lambda: None)(),
+    }

@@ -17,6 +17,7 @@ Django middleware: ghosttrap.middleware.GhostTrapMiddleware.
 
 import json
 import logging
+import socket
 import sys
 import traceback
 import urllib.request
@@ -25,9 +26,11 @@ GHOSTTRAP_SERVER = "https://ghosttrap.io"
 
 _endpoint = None
 _original_excepthook = None
+_server_name = None
+_send_user = False
 
 
-def init(dsn, server=None):
+def init(dsn, server=None, send_user=False):
     """Configure the reporter.
 
     Args:
@@ -35,28 +38,39 @@ def init(dsn, server=None):
              (e.g. "https://ghosttrap.io/trap/owner/repo/")
         server: Base server URL. Only needed if dsn is a token and
                 you're not using ghosttrap.io.
+        send_user: If True, the Django integration attaches the
+                authenticated user's id and username to reported errors.
+                Default False — user data is PII and stays out of
+                payloads unless you opt in.
     """
-    global _endpoint, _original_excepthook
+    global _endpoint, _original_excepthook, _server_name, _send_user
     if dsn.startswith("http://") or dsn.startswith("https://"):
         _endpoint = dsn.rstrip("/") + "/"
     else:
         base = (server or GHOSTTRAP_SERVER).rstrip("/")
         _endpoint = f"{base}/trap/{dsn}/"
+    try:
+        _server_name = socket.gethostname() or None
+    except Exception:
+        _server_name = None
+    _send_user = bool(send_user)
     _original_excepthook = sys.excepthook
     sys.excepthook = _error_hook
     _install_logging_handler()
     _install_celery_hook()
 
 
-def report(exc):
+def report(exc, user=None):
     """Report a caught exception to the ghosttrap server.
 
     Args:
         exc: the exception instance from an `except Exception as exc` block
+        user: optional dict with user context (id, username). Only sent
+              if init() was called with send_user=True.
     """
     if _endpoint is None:
         return
-    _post(_build_payload(type(exc), exc, exc.__traceback__))
+    _post(_build_payload(type(exc), exc, exc.__traceback__, user=user))
 
 
 def _error_hook(exc_type, exc_value, exc_tb):
@@ -88,9 +102,9 @@ class _GhostTrapLogHandler(logging.Handler):
             report(record.exc_info[1])
 
 
-def _build_payload(exc_type, exc_value, exc_tb):
+def _build_payload(exc_type, exc_value, exc_tb, user=None):
     frames = traceback.extract_tb(exc_tb) if exc_tb else []
-    return {
+    payload = {
         "type": exc_type.__name__,
         "message": str(exc_value),
         "traceback": traceback.format_exception(exc_type, exc_value, exc_tb) if exc_tb else [],
@@ -104,6 +118,11 @@ def _build_payload(exc_type, exc_value, exc_tb):
             for f in frames
         ],
     }
+    if _server_name:
+        payload["server_name"] = _server_name
+    if user and _send_user:
+        payload["user"] = user
+    return payload
 
 
 def _post(payload):
