@@ -51,6 +51,24 @@ MIDDLEWARE = [
 ]
 ```
 
+## Manually trap an event
+
+For errors you catch and handle but still want logged, or for non-exception conditions worth flagging:
+
+```python
+import ghosttrap
+
+try:
+    do_thing()
+except ValueError as e:
+    ghosttrap.trap(e)        # caught exception — sent with type, message, traceback
+    fallback()
+
+ghosttrap.trap("payment gateway returned 503")  # synthetic event labelled "TrappedEvent"
+```
+
+`trap()` accepts an exception instance or a string. Strings get the caller's stack attached and a `TrappedEvent` type so they're distinct from real exceptions in the CLI. Both go through the same 5-minute dedup window as the auto-hook.
+
 ## User context
 
 Off by default. Pass `send_user=True` to `init()` and the Django middleware will attach the authenticated user's `id` and `username` to each report. Has no effect outside Django.

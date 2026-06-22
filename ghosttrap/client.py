@@ -61,16 +61,30 @@ def init(dsn, server=None, send_user=False):
 
 
 def report(exc, user=None):
-    """Report a caught exception to the ghosttrap server.
+    """Report a caught exception. Kept for backward compatibility; prefer `trap`."""
+    trap(exc, user=user)
+
+
+def trap(exc_or_message, user=None):
+    """Manually trap an event.
+
+    Pass an exception instance to report a caught error (its type, message,
+    and traceback are sent). Pass a string to report a synthetic event with
+    the caller's current stack — labelled `TrappedEvent` so it's distinct
+    from real exceptions.
 
     Args:
-        exc: the exception instance from an `except Exception as exc` block
+        exc_or_message: exception instance or string
         user: optional dict with user context (id, username). Only sent
               if init() was called with send_user=True.
     """
     if _endpoint is None:
         return
-    _post(_build_payload(type(exc), exc, exc.__traceback__, user=user))
+    if isinstance(exc_or_message, BaseException):
+        exc = exc_or_message
+        _post(_build_payload(type(exc), exc, exc.__traceback__, user=user))
+    else:
+        _post(_build_synthetic_payload(str(exc_or_message), user=user))
 
 
 def _error_hook(exc_type, exc_value, exc_tb):
@@ -100,6 +114,27 @@ class _GhostTrapLogHandler(logging.Handler):
     def emit(self, record):
         if record.exc_info and record.exc_info[1]:
             report(record.exc_info[1])
+
+
+def _build_synthetic_payload(message, user=None):
+    frames_obj = traceback.extract_stack()[:-2]  # drop trap() and this builder
+    formatted = ["Traceback (most recent call last):\n"]
+    formatted += traceback.format_list(frames_obj)
+    formatted.append(f"TrappedEvent: {message}\n")
+    payload = {
+        "type": "TrappedEvent",
+        "message": message,
+        "traceback": formatted,
+        "frames": [
+            {"file": f.filename, "line": f.lineno, "function": f.name, "code": f.line}
+            for f in frames_obj
+        ],
+    }
+    if _server_name:
+        payload["server_name"] = _server_name
+    if user and _send_user:
+        payload["user"] = user
+    return payload
 
 
 def _build_payload(exc_type, exc_value, exc_tb, user=None):
