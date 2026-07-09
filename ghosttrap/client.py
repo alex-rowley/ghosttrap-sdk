@@ -11,8 +11,10 @@ Usage:
 
 Hooks into sys.excepthook (unhandled exceptions), Python logging
 (logger.exception / logger.error with exc_info), and Celery task
-failures (if Celery is installed). For additional coverage, use the
-Django middleware: ghosttrap.middleware.GhostTrapMiddleware.
+failures (if Celery is installed). Django apps should add
+ghosttrap.django.GhostTrapApp to INSTALLED_APPS and
+ghosttrap.django.GhostTrapMiddleware to MIDDLEWARE. To report a
+caught exception or a non-exception condition, call ghosttrap.trap().
 """
 
 import json
