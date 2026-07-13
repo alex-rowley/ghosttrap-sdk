@@ -29,7 +29,13 @@ class GhostTrapApp(AppConfig):
 
 
 class GhostTrapMiddleware:
-    """Catches unhandled view exceptions and reports them."""
+    """Catches unhandled view exceptions and reports them.
+
+    Django's own control-flow exceptions are not errors: the framework
+    converts Http404 -> 404, PermissionDenied -> 403 and
+    SuspiciousOperation (incl. DisallowedHost) -> 400 after middleware
+    sees them. Reporting those turns every bot probe of a login form or
+    raw-IP request into a page, so they are ignored here."""
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -38,6 +44,11 @@ class GhostTrapMiddleware:
         return self.get_response(request)
 
     def process_exception(self, request, exception):
+        from django.core.exceptions import PermissionDenied, SuspiciousOperation
+        from django.http import Http404
+
+        if isinstance(exception, (Http404, PermissionDenied, SuspiciousOperation)):
+            return None
         from ghosttrap.client import report
         report(exception, user=_user_context(request))
         return None
