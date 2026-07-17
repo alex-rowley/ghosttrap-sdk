@@ -9,7 +9,8 @@ Usage:
     # or with a full URL:
     ghosttrap.init("https://ghosttrap.io/trap/owner/repo/")
 
-Hooks into sys.excepthook (unhandled exceptions), Python logging
+Hooks into sys.excepthook (unhandled exceptions), threading.excepthook
+(unhandled exceptions in background threads), Python logging
 (logger.exception / logger.error with exc_info), and Celery task
 failures (if Celery is installed). Django apps should add
 ghosttrap.django.GhostTrapApp to INSTALLED_APPS and
@@ -21,6 +22,7 @@ import json
 import logging
 import socket
 import sys
+import threading
 import traceback
 import urllib.request
 
@@ -28,11 +30,13 @@ GHOSTTRAP_SERVER = "https://ghosttrap.io"
 
 _endpoint = None
 _original_excepthook = None
+_original_threading_excepthook = None
 _server_name = None
 _send_user = False
+_trap_logs = False
 
 
-def init(dsn, server=None, send_user=False):
+def init(dsn, server=None, send_user=False, trap_logs=False):
     """Configure the reporter.
 
     Args:
@@ -44,8 +48,14 @@ def init(dsn, server=None, send_user=False):
                 authenticated user's id and username to reported errors.
                 Default False — user data is PII and stays out of
                 payloads unless you opt in.
+        trap_logs: If True, logger.error() / logger.critical() calls
+                that carry no exception are reported too, as type
+                LoggedError / LoggedCritical with the log call site as
+                the frame. Default False — in chatty codebases every
+                error-level log line becomes an event, which floods.
     """
-    global _endpoint, _original_excepthook, _server_name, _send_user
+    global _endpoint, _original_excepthook, _original_threading_excepthook, \
+        _server_name, _send_user, _trap_logs
     if dsn.startswith("http://") or dsn.startswith("https://"):
         _endpoint = dsn.rstrip("/") + "/"
     else:
@@ -56,8 +66,11 @@ def init(dsn, server=None, send_user=False):
     except Exception:
         _server_name = None
     _send_user = bool(send_user)
+    _trap_logs = bool(trap_logs)
     _original_excepthook = sys.excepthook
     sys.excepthook = _error_hook
+    _original_threading_excepthook = threading.excepthook
+    threading.excepthook = _thread_hook
     _install_logging_handler()
     _install_celery_hook()
 
@@ -94,6 +107,15 @@ def _error_hook(exc_type, exc_value, exc_tb):
     _original_excepthook(exc_type, exc_value, exc_tb)
 
 
+def _thread_hook(args):
+    # sys.excepthook never fires for threads; Python routes them here instead.
+    # SystemExit in a thread is a normal way to stop one — the stdlib hook
+    # ignores it silently, and so do we.
+    if args.exc_type is not SystemExit:
+        _post(_build_payload(args.exc_type, args.exc_value, args.exc_traceback))
+    _original_threading_excepthook(args)
+
+
 def _install_logging_handler():
     handler = _GhostTrapLogHandler()
     handler.setLevel(logging.ERROR)
@@ -116,6 +138,31 @@ class _GhostTrapLogHandler(logging.Handler):
     def emit(self, record):
         if record.exc_info and record.exc_info[1]:
             report(record.exc_info[1])
+        elif _trap_logs:
+            _post(_build_logged_payload(record))
+
+
+def _build_logged_payload(record):
+    message = record.getMessage()
+    etype = "LoggedCritical" if record.levelno >= logging.CRITICAL else "LoggedError"
+    payload = {
+        "type": etype,
+        "message": message,
+        "traceback": [
+            f"Logged {record.levelname} from logger '{record.name}':\n",
+            f'  File "{record.pathname}", line {record.lineno}, in {record.funcName}\n',
+            f"{etype}: {message}\n",
+        ],
+        "frames": [{
+            "file": record.pathname,
+            "line": record.lineno,
+            "function": record.funcName,
+            "code": None,
+        }],
+    }
+    if _server_name:
+        payload["server_name"] = _server_name
+    return payload
 
 
 def _build_synthetic_payload(message, user=None):

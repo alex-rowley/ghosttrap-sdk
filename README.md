@@ -24,14 +24,20 @@ ghosttrap.init(
     "t_your_token_here",
     server="https://ghosttrap.io",  # override only if self-hosting
     send_user=False,                # see "User context" below
+    trap_logs=False,                # see "Bare log errors" below
 )
 ```
 
 ## What it hooks into
 
 - **`sys.excepthook`** — unhandled exceptions
+- **`threading.excepthook`** — unhandled exceptions in background threads (these never reach `sys.excepthook`)
 - **Python logging** — `logger.exception()` and `logger.error(..., exc_info=True)`
 - **Celery** — task failures via `celery.signals.task_failure` (auto-detected)
+
+## Bare log errors (opt-in)
+
+By default, only log records carrying an exception are reported. Pass `trap_logs=True` to also report `logger.error()` / `logger.critical()` calls with no exception — they arrive as type `LoggedError` / `LoggedCritical` with the log call site as the frame. Off by default deliberately: in a chatty codebase every error-level log line becomes an event, and error trackers that default this on are famous for the resulting floods. The server's 5-minute dedup window still applies either way.
 
 ## What it sends
 
