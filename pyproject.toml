@@ -15,3 +15,6 @@ Homepage = "https://github.com/alex-rowley/ghosttrap-sdk"
 
 [tool.setuptools.packages.find]
 include = ["ghosttrap*"]
+
+[tool.setuptools.package-data]
+"ghosttrap.django" = ["static/ghosttrap/*.js"]

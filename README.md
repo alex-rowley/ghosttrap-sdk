@@ -51,6 +51,24 @@ MIDDLEWARE = [
 ]
 ```
 
+## Browser / JavaScript errors
+
+Errors in your users' browsers never reach the Python hooks. The Django integration ships a small relay so they land in the same stream. Two lines:
+
+```python
+# urls.py
+path("ghosttrap/", include("ghosttrap.django.urls")),
+```
+
+```html
+<!-- base template -->
+<script src="{% static 'ghosttrap/ghosttrap.js' %}" defer></script>
+```
+
+The script hooks uncaught errors and unhandled promise rejections, drops known junk (opaque cross-origin `"Script error."`, browser-extension noise), deduplicates per page, and caps itself at 10 reports per page load. It posts to your own domain — the ghosttrap token never appears in page source — and the relay view forwards through the endpoint you configured with `init()`. No CORS setup, and ad blockers don't see a third-party request.
+
+Browser events arrive with the JS error type (e.g. `TypeError`), the page URL in the traceback header, and the parsed JS stack as frames. Minified bundles produce minified frames — there's no source-map support. If you mount the relay somewhere other than `/ghosttrap/`, point the script at it with `data-endpoint="/your/path/js/"`.
+
 ## Manually trap an event
 
 For errors you catch and handle but still want logged, or for non-exception conditions worth flagging:
