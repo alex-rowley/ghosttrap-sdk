@@ -12,14 +12,17 @@ dictConfig runs (which typically clobbers handlers added during
 init()). Also provides the GhostTrapMiddleware for catching
 unhandled view exceptions.
 
-Browser-side JavaScript capture (the /ghosttrap/js/ relay) is disabled:
-the endpoint was anonymous by design, and now that agents act on stream
-events, unauthenticated attacker-controlled text is an injection channel.
-It returns 410 until ingest has write-only tokens and reserved-type
-protection. See the repo history (v0.4.6-v0.4.8) for the implementation.
+Browser-side JavaScript capture is quarantined by design. The relay
+(include ghosttrap.django.urls + static/ghosttrap/ghosttrap.js in the
+base template) forwards browser errors to the server's /trapjs/ ingest,
+which only stores them: they never enter the agent stream — no WebSocket
+fanout, no cursor — because browser senders are anonymous and streams
+carry messages agents act on. Retrieval is pull-only: `ghosttrap jslogs`.
 """
 
+import json
 import logging
+import urllib.request
 
 from django.apps import AppConfig
 from django.http import JsonResponse
@@ -61,10 +64,66 @@ def _user_context(request):
     }
 
 
+_MAX_JS_BODY = 32 * 1024
+
+
+def _js_endpoint():
+    """The quarantined ingest URL, derived from the configured trap endpoint."""
+    from ghosttrap import client
+    if client._endpoint is None:
+        return None
+    return client._endpoint.replace("/trap/", "/trapjs/")
+
+
+def _forward(endpoint, payload):
+    try:
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+
 @csrf_exempt
 def js_report(request):
-    """Disabled browser-capture relay. Kept as a stub so existing
-    include("ghosttrap.django.urls") lines don't break on upgrade —
-    the route answers 410 and forwards nothing.
+    """Same-origin relay for the browser capture script. Forwards to the
+    server's quarantined /trapjs/ ingest — stored, capped, deduped, but
+    never streamed to agents. The browser is anonymous; its events don't
+    get to speak, only to be looked at (`ghosttrap jslogs`).
     """
-    return JsonResponse({"error": "browser capture is disabled in this release"}, status=410)
+    if request.method != "POST":
+        return JsonResponse({"error": "POST only"}, status=405)
+    if len(request.body) > _MAX_JS_BODY:
+        return JsonResponse({"error": "too large"}, status=413)
+    try:
+        data = json.loads(request.body)
+        if not isinstance(data, dict):
+            raise ValueError
+    except (ValueError, UnicodeDecodeError):
+        return JsonResponse({"error": "bad json"}, status=400)
+
+    message = str(data.get("message") or "")
+    stack = str(data.get("stack") or "")
+    # The capture script filters these too; re-check here since the endpoint is open.
+    if not message and not stack:
+        return JsonResponse({"ok": True, "dropped": True})
+    if message == "Script error." and not stack:
+        return JsonResponse({"ok": True, "dropped": True})
+    if "-extension://" in stack or "-extension://" in message:
+        return JsonResponse({"ok": True, "dropped": True})
+
+    endpoint = _js_endpoint()
+    if endpoint is None:
+        return JsonResponse({"ok": True, "dropped": True})
+
+    _forward(endpoint, {
+        "name": str(data.get("name") or "Error")[:100],
+        "message": message[:2000],
+        "stack": stack[:8000],
+        "url": str(data.get("url") or "")[:500],
+        "kind": str(data.get("kind") or "error")[:32],
+    })
+    return JsonResponse({"ok": True})

@@ -57,9 +57,23 @@ MIDDLEWARE = [
 ]
 ```
 
-## Browser / JavaScript errors
+## Browser / JavaScript errors (quarantined)
 
-Disabled for now. The relay shipped in 0.4.6–0.4.8 accepted anonymous posts by design (the browser can't hold a secret), and since ghosttrap streams now carry agent-to-agent messages that agents act on, an unauthenticated text channel into the stream is an injection risk we're not willing to carry. The `/ghosttrap/js/` route answers 410 and forwards nothing. It will return once ingest distinguishes write-only tokens and reserves message types.
+Browser errors are captured but **never stream**. A browser can't hold a secret, so its events are anonymous — and ghosttrap streams carry agent-to-agent messages that agents act on. Rather than let anonymous text into that channel, browser events go to a quarantined shelf: stored server-side, capped and deduped, never fanned out to `peek`/`watch`, never touching the cursor. Retrieval is pull-only via `ghosttrap jslogs` (from ghosttrap-cli), which labels them as untrusted telemetry.
+
+Wiring is the same two lines as before:
+
+```python
+# urls.py
+path("ghosttrap/", include("ghosttrap.django.urls")),
+```
+
+```html
+<!-- base template -->
+<script src="{% static 'ghosttrap/ghosttrap.js' %}" defer></script>
+```
+
+The script hooks uncaught errors and unhandled promise rejections, drops known junk (opaque cross-origin `"Script error."`, browser-extension noise), dedupes per page, and caps itself at 10 reports per page load. The relay forwards to the server's `/trapjs/` ingest using your `init()` config — no token in page source, no CORS, no third-party request for ad blockers to eat. Server-side: 5-minute dedup and a 500-event per-repo retention cap.
 
 ## Manually trap an event
 
