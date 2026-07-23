@@ -12,20 +12,14 @@ dictConfig runs (which typically clobbers handlers added during
 init()). Also provides the GhostTrapMiddleware for catching
 unhandled view exceptions.
 
-To capture browser-side JavaScript errors, include the relay
-endpoint and serve the capture script from your base template:
-
-    path("ghosttrap/", include("ghosttrap.django.urls")),
-
-    <script src="{% static 'ghosttrap/ghosttrap.js' %}" defer></script>
-
-The browser posts to your own domain, so the ghosttrap token never
-appears in page source; the relay forwards through init()'s endpoint.
+Browser-side JavaScript capture (the /ghosttrap/js/ relay) is disabled:
+the endpoint was anonymous by design, and now that agents act on stream
+events, unauthenticated attacker-controlled text is an injection channel.
+It returns 410 until ingest has write-only tokens and reserved-type
+protection. See the repo history (v0.4.6-v0.4.8) for the implementation.
 """
 
-import json
 import logging
-import re
 
 from django.apps import AppConfig
 from django.http import JsonResponse
@@ -67,88 +61,10 @@ def _user_context(request):
     }
 
 
-_MAX_JS_BODY = 32 * 1024
-
-# One stack line in either dialect:
-#   Chrome/Edge:    "    at func (https://site/app.js:10:5)" or "    at https://site/app.js:10:5"
-#   Firefox/Safari: "func@https://site/app.js:10:5" or "@https://site/app.js:10:5"
-_STACK_LINE = re.compile(
-    r"^\s*(?:at\s+(?:(?P<cfunc>.*?)\s+\()?|(?P<ffunc>[^@]*)@)"
-    r"(?P<file>[^()\s]+?):(?P<line>\d+):\d+\)?\s*$"
-)
-
-
-def _parse_js_stack(stack):
-    frames = []
-    for raw in stack.splitlines():
-        m = _STACK_LINE.match(raw)
-        if not m:
-            continue
-        function = m.group("cfunc") or m.group("ffunc") or "?"
-        frames.append({
-            "file": m.group("file"),
-            "line": int(m.group("line")),
-            "function": function,
-            "code": None,
-        })
-    # JS stacks are innermost-first; ghosttrap frames are innermost-last.
-    frames.reverse()
-    return frames
-
-
-def _js_payload(data, user=None):
-    name = str(data.get("name") or "Error")[:100]
-    message = str(data.get("message") or "")[:2000]
-    stack = str(data.get("stack") or "")[:8000]
-    page = str(data.get("url") or "")[:500]
-    kind = "unhandledrejection" if data.get("kind") == "unhandledrejection" else "error"
-
-    # The capture script filters these too; re-check here since the endpoint is open.
-    if not message and not stack:
-        return None
-    if message == "Script error." and not stack:
-        return None
-    if "-extension://" in stack or "-extension://" in message:
-        return None
-
-    header = f"JavaScript {kind} on {page}:\n" if page else f"JavaScript {kind}:\n"
-    traceback_lines = [header]
-    traceback_lines += [line + "\n" for line in stack.splitlines()]
-    traceback_lines.append(f"{name}: {message}\n")
-
-    payload = {
-        "type": name,
-        "message": message,
-        "traceback": traceback_lines,
-        "frames": _parse_js_stack(stack),
-    }
-    from ghosttrap import client
-    if client._server_name:
-        payload["server_name"] = client._server_name
-    if user and client._send_user:
-        payload["user"] = user
-    return payload
-
-
 @csrf_exempt
 def js_report(request):
-    """Same-origin relay for the browser capture script (static/ghosttrap/ghosttrap.js)."""
-    from ghosttrap import client
-    if request.method != "POST":
-        return JsonResponse({"error": "POST only"}, status=405)
-    if len(request.body) > _MAX_JS_BODY:
-        return JsonResponse({"error": "too large"}, status=413)
-    try:
-        data = json.loads(request.body)
-        if not isinstance(data, dict):
-            raise ValueError
-    except (ValueError, UnicodeDecodeError):
-        return JsonResponse({"error": "bad json"}, status=400)
-
-    payload = _js_payload(data, user=_user_context(request))
-    if payload is None:
-        return JsonResponse({"ok": True, "dropped": True})
-    if client._endpoint is None:
-        return JsonResponse({"ok": True, "dropped": True})
-    client._post(payload)
-    return JsonResponse({"ok": True})
+    """Disabled browser-capture relay. Kept as a stub so existing
+    include("ghosttrap.django.urls") lines don't break on upgrade —
+    the route answers 410 and forwards nothing.
+    """
+    return JsonResponse({"error": "browser capture is disabled in this release"}, status=410)
