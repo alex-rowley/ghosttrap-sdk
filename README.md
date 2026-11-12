@@ -43,6 +43,8 @@ By default, only log records carrying an exception are reported. Pass `trap_logs
 
 Every report includes the exception type, message, traceback, frames (file/line/function/code), and the server's hostname (`socket.gethostname()`).
 
+Inside Docker that hostname is the container id, which names no machine and changes on every redeploy. Set `GHOSTTRAP_SERVER_NAME` in the container's environment (e.g. in the box's `.env`, passed through by compose) and it is sent as `server_name` instead.
+
 ## Ad-hoc shell errors (shelved, never streamed)
 
 Errors only stream if the crashing code lives in the repo. Code someone typed — `manage.py shell` / `shell_plus`, `python -c`, piped stdin, a REPL — has no file, no line, no commit, and its author already watched it fail in their own terminal. The SDK detects these processes at `init()` and tags their reports `channel: adhoc`; the server stores them on the same quarantined shelf as browser events (capped, deduped, pull-only via `ghosttrap shelf`) instead of waking the repo's agent. Service processes — web workers, celery, real management commands like `migrate` — stream normally.

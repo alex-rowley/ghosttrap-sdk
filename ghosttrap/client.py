@@ -83,6 +83,8 @@ def init(dsn, server=None, send_user=False, trap_logs=False):
     Environment: GHOSTTRAP_DISABLE=1 makes init() a no-op for this
     process. GHOSTTRAP_CHANNEL=service|adhoc forces the reporting
     channel instead of auto-detection (see _detect_channel).
+    GHOSTTRAP_SERVER_NAME=<name> is sent as server_name instead of
+    socket.gethostname(), which inside Docker is only the container id.
     """
     global _endpoint, _original_excepthook, _original_threading_excepthook, \
         _server_name, _send_user, _trap_logs, _channel
@@ -94,10 +96,14 @@ def init(dsn, server=None, send_user=False, trap_logs=False):
     else:
         base = (server or GHOSTTRAP_SERVER).rstrip("/")
         _endpoint = f"{base}/trap/{dsn}/"
-    try:
-        _server_name = socket.gethostname() or None
-    except Exception:
-        _server_name = None
+    # Inside Docker, gethostname() is the container id — it names no box and
+    # changes on every redeploy. GHOSTTRAP_SERVER_NAME lets the box name itself.
+    _server_name = os.environ.get("GHOSTTRAP_SERVER_NAME", "").strip() or None
+    if _server_name is None:
+        try:
+            _server_name = socket.gethostname() or None
+        except Exception:
+            _server_name = None
     _send_user = bool(send_user)
     _trap_logs = bool(trap_logs)
     _original_excepthook = sys.excepthook
